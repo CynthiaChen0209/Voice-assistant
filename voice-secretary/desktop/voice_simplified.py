@@ -148,10 +148,17 @@ class ChineseTranscriptionThread(QThread):
     def load_model(self):
         """加载模型"""
         if self.model is None:
-            logger.info("加载Whisper中文优化模型...")
-            # 使用small模型，对中文识别效果更好
-            self.model = whisper.load_model("small", device="cpu")
-            logger.info("模型加载完成")
+            logger.info("加载Whisper中文优化模型 (medium)...")
+            # 使用medium模型，对中文识别准确率更高
+            # small: 75MB, medium: 142MB, large: 155MB
+            try:
+                self.model = whisper.load_model("medium", device="cpu")
+                logger.info("Medium模型加载完成 - 高准确率模式")
+            except Exception as e:
+                logger.warning(f"Medium模型加载失败，降级到small模型: {str(e)}")
+                # 降级到small模型作为备选
+                self.model = whisper.load_model("small", device="cpu")
+                logger.info("Small模型加载完成 - 标准准确率模式")
     
     def clean_text(self, text: str) -> str:
         """清理语气词和停顿词，修复中文标点符号"""
@@ -277,34 +284,56 @@ class ChineseTranscriptionThread(QThread):
         try:
             self.load_model()
             
-            # 音频预处理 - 简化处理，保持原始质量
+            # 音频预处理 - Ultra优化版本
             if self.audio_data.dtype != np.float32:
                 audio_float = self.audio_data.astype(np.float32) / 32768.0
             else:
                 audio_float = self.audio_data.copy()
             
-            # 简单归一化（避免过度处理）
+            # 1. 基础归一化
             if np.max(np.abs(audio_float)) > 0:
                 audio_float = audio_float / np.max(np.abs(audio_float))
             
-            # 轻微的音量调整，避免过度处理
-            audio_float = audio_float * 0.95
+            # 2. 智能音量优化 - 针对语音特性
+            # 计算语音活跃度
+            speech_energy = np.sqrt(np.mean(audio_float**2))
+            if speech_energy < 0.1:  # 音量太小
+                gain = 1.2  # 增益
+            elif speech_energy > 0.8:  # 音量太大
+                gain = 0.9  # 衰减
+            else:
+                gain = 1.0  # 保持
+            
+            audio_float = audio_float * gain
+            
+            # 3. 轻微的动态范围压缩 (提升语音清晰度)
+            audio_float = np.tanh(audio_float * 0.95) * 0.95
+            
+            # 4. 安全限幅
             audio_float = np.clip(audio_float, -1.0, 1.0)
             
-            # 转录 - 优化中文识别，提高准确性
+            logger.info(f"音频预处理完成 - 语音能量: {speech_energy:.3f}, 增益: {gain:.2f}")
+            
+            # 转录 - Ultra优化中文识别，最大化准确性
             try:
-                # 使用最佳参数组合
+                # 使用Ultra最佳参数组合 (v1.3优化)
                 result = self.model.transcribe(
                     audio_float, 
                     language="zh",  # 明确指定中文
                     task="transcribe",
-                    initial_prompt="这是一段中文普通话录音，请准确转录。",  # 更准确的提示
+                    # Ultra优化的提示语，包含专业场景
+                    initial_prompt="请准确转录以下中文普通话录音。这是办公场景的语音记录，包含正式的商务用语和专业词汇。",  
                     fp16=False,  # 禁用FP16提高准确性
-                    temperature=0.0,  # 无随机性，最准确
-                    beam_size=5,  # 使用beam search提高准确性
-                    best_of=5,  # 生成多个结果选择最佳
-                    patience=1.0,  # 提高准确性
+                    temperature=0.0,  # 完全确定性，无随机性
+                    beam_size=10,  # 增大beam size提高准确性
+                    best_of=10,  # 生成更多候选结果
+                    patience=2.0,  # 增加耐心度提高准确性
                     condition_on_previous_text=False,  # 不依赖前文，提高独立性
+                    # 新增优化参数
+                    length_penalty=1.0,  # 长度惩罚因子
+                    suppress_tokens=[],  # 不抑制特殊标记
+                    prepend_punctuations="\"'¿([{-",  # 标点符号前置处理
+                    append_punctuations "\"'.。,，!！?？:：")",  # 标点符号后置处理
                     compression_ratio_threshold=2.4,  # 压缩比阈值
                     logprob_threshold=-1.0,  # 对数概率阈值
                     no_speech_threshold=0.6  # 语音检测阈值
@@ -312,16 +341,17 @@ class ChineseTranscriptionThread(QThread):
             except TypeError as e:
                 if any(param in str(e) for param in ["compression_ratio_threshold", "logprob_threshold", "no_speech_threshold", "prompt_reset_on_temperature"]):
                     logger.warning("使用兼容模式转录（去除不支持的参数）")
-                    # 使用兼容参数，保持准确性
+                    # 使用兼容参数，保持高准确性
                     result = self.model.transcribe(
                         audio_float, 
                         language="zh",
                         task="transcribe",
-                        initial_prompt="这是一段中文普通话录音，请准确转录。",
+                        initial_prompt="请准确转录以下中文普通话录音。办公场景语音记录，包含商务用语和专业词汇。",
                         fp16=False,
                         temperature=0.0,  # 保持无随机性
-                        beam_size=5,  # 使用beam search
-                        condition_on_previous_text=False
+                        beam_size=8,  # 增大beam size提高准确性
+                        best_of=8,  # 生成更多候选结果
+                        condition_on_previous_text=False  # 提高独立性
                     )
                 else:
                     raise e
