@@ -661,7 +661,7 @@ class VoiceSecretaryGUI(QMainWindow):
         """)
         
         # 优雅的清空按钮
-        self.clear_button = QPushButton("清空")
+        self.clear_button = QPushButton("全部清空")
         self.clear_button.setFixedSize(80, 36)
         self.clear_button.setStyleSheet(f"""
             QPushButton {{
@@ -742,8 +742,9 @@ class VoiceSecretaryGUI(QMainWindow):
         """)
         
         # 优雅的翻译按钮
-        self.translate_button = QPushButton("翻译")
-        self.translate_button.setFixedSize(80, 36)
+        self.translate_button = QPushButton("全文翻译")
+        self.translate_button.setFixedSize(100, 36)
+        self.translate_button.setToolTip("翻译中文文本框中的所有内容")
         self.translate_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: #F8FBFF;
@@ -773,7 +774,7 @@ class VoiceSecretaryGUI(QMainWindow):
         
         # 英文文本框（全宽度）
         self.english_text = QTextEdit()
-        self.english_text.setPlaceholderText("点击翻译按钮获取英文翻译...")
+        self.english_text.setPlaceholderText("点击'全文翻译'按钮获取所有中文内容的英文翻译...")
         self.english_text.setMinimumHeight(110)
         self.english_text.setStyleSheet(f"""
             QTextEdit {{
@@ -968,7 +969,7 @@ class VoiceSecretaryGUI(QMainWindow):
             })
             
             # 更新状态指示器
-            self.status_label.setText("状态: 转录完成，您可以修改中文后点击翻译")
+            self.status_label.setText("状态: 转录完成，您可以修改中文后点击'全文翻译'")
             self.status_dot.setStyleSheet(f"""
                 QLabel {{
                     font-size: 20px;
@@ -991,7 +992,7 @@ class VoiceSecretaryGUI(QMainWindow):
         logger.info(f"转录完成: {original_text[:50]}...")
     
     def manual_translate(self):
-        """手动翻译当前中文文本框内容"""
+        """手动翻译中文文本框中的所有内容"""
         try:
             chinese_text = self.chinese_text.toPlainText().strip()
             
@@ -999,34 +1000,151 @@ class VoiceSecretaryGUI(QMainWindow):
                 QMessageBox.warning(self, "提示", "请先输入或转录中文内容")
                 return
             
-            # 获取最后一行非空内容
-            lines = [line.strip() for line in chinese_text.split('\n') if line.strip()]
+            # 清理所有内容，获取完整的中文文本
+            import re
+            full_text = self.clean_text(chinese_text)
             
-            if not lines:
-                QMessageBox.warning(self, "提示", "请先输入或转录中文内容")
-                return
+            # 进一步清理，移除可能的空行和重复内容
+            lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+            clean_chinese = '\n'.join(lines)
             
-            # 直接获取最后一行纯文本（无时间戳）
-            latest_chinese = lines[-1]
+            logger.info(f"准备翻译全文内容: '{clean_chinese[:100]}...'")
             
-            logger.info(f"选择翻译的内容: '{latest_chinese}'")
-            
-            if not latest_chinese:
+            if not clean_chinese:
                 QMessageBox.warning(self, "提示", "未找到可翻译的中文内容")
                 return
             
             # 简单更新状态
-            self.status_label.setText("状态: 正在翻译...")
-            self.status_bar.showMessage("🌐 正在翻译...")
+            self.status_label.setText("状态: 正在进行全文翻译...")
+            self.status_bar.showMessage("🌐 正在进行全文翻译...")
             
-            # 创建翻译线程
-            self.translate_thread = TranslateThread(latest_chinese)
+            # 创建翻译线程，翻译所有内容
+            self.translate_thread = TranslateThread(clean_chinese)
             self.translate_thread.translation_ready.connect(self.on_manual_translation_ready)
             self.translate_thread.start()
             
         except Exception as e:
             logger.error(f"翻译时出错: {str(e)}")
             QMessageBox.warning(self, "提示", f"翻译时出现错误: {str(e)}")
+    
+    def clean_text(self, text: str) -> str:
+        """清理语气词和停顿词，修复中文标点符号"""
+        import re
+        
+        # 常见语气词列表
+        filler_words = [
+            # 单字语气词
+            '嗯', '啊', '哦', '唉', '咦', '哟', '嘿', '嗯哼',
+            '那个', '这个', '就是', '然后', '还有', '或者',
+            '吼', '哈', '嘿咻', '呃', '唔', '嘛', '哦哦',
+            # 停顿词
+            '嗯嗯', '啊啊', '哦哦', '呃呃', '唔唔', '嘛嘛',
+            # 连接词
+            '然后呢', '还有就是', '就是说', '也就是说',
+            # 思考词
+            '让我想想', '我想想', '这个嘛', '那个嘛',
+            # 常见口头禅
+            '对吧', '是吧', '对吧', '对不对', '是不是',
+            # 犹豫词
+            '怎么说呢', '怎么说', '大概', '可能', '也许',
+            '好像', '似乎', '差不多', '基本上'
+        ]
+        
+        # 清理文本
+        cleaned_text = text.strip()
+        
+        # 第一步：移除错误的英文内容（中文识别不应该包含英文单词）
+        cleaned_text = re.sub(r'[a-zA-Z]+', '', cleaned_text)
+        
+        # 第二步：标准化中文标点符号（符合中文文法习惯）
+        # 英文标点转中文标点
+        punctuation_map = {
+            '.': '。',      # 英文句号 → 中文句号
+            ',': '，',      # 英文逗号 → 中文逗号
+            '?': '？',      # 英文问号 → 中文问号
+            '!': '！',      # 英文感叹号 → 中文感叹号
+            ':': '：',      # 英文冒号 → 中文冒号
+            ';': '；',      # 英文分号 → 中文分号
+            '"': '"',      # 英文双引号 → 中文双引号
+            "'": "'",      # 英文单引号 → 中文单引号
+            '(': '（',      # 英文左括号 → 中文左括号
+            ')': '）',      # 英文右括号 → 中文右括号
+        }
+        
+        for en_punc, zh_punc in punctuation_map.items():
+            cleaned_text = cleaned_text.replace(en_punc, zh_punc)
+        
+        # 第三步：修正中文标点符号使用规范
+        # 顿号（、）用于并列词语，逗号（，）用于句子分隔
+        # 智能判断：如果是单个汉字的并列，使用顿号
+        cleaned_text = re.sub(r'([\u4e00-\u9fff])、([\u4e00-\u9fff])', r'\1、\2', cleaned_text)
+        
+        # 修正错误使用顿号的情况，改为逗号
+        cleaned_text = re.sub(r'，、', '，', cleaned_text)  # 重复标点
+        cleaned_text = re.sub(r'、，', '，', cleaned_text)  # 重复标点
+        cleaned_text = re.sub(r'、(?!\s*[\u4e00-\u9fff])', '，', cleaned_text)  # 后面不是汉字用逗号
+        
+        # 第二步：移除语气词
+        for filler in filler_words:
+            pattern = r'\s*' + re.escape(filler) + r'\s*'
+            cleaned_text = re.sub(pattern, '', cleaned_text)
+        
+        # 第三步：清理多余空格（中文通常不使用空格）
+        cleaned_text = re.sub(r'\s+', '', cleaned_text)
+        
+        # 第四步：修复重复标点符号
+        duplicate_puncs = [
+            (r'[，，]{2,}', '，'),      # 多个逗号
+            (r'[、、]{2,}', '、'),      # 多个顿号
+            (r'[。。]{2,}', '。'),      # 多个句号
+            (r'[！！]{2,}', '！'),      # 多个感叹号
+            (r'[？？]{2,}', '？'),      # 多个问号
+            (r'[；；]{2,}', '；'),      # 多个分号
+            (r'[：：]{2,}', '：'),      # 多个冒号
+            (r'[""]{2,}', '"'),       # 多个双引号
+            (r"[']{2,}", "'"),       # 多个单引号
+            (r'[（(）（)]{2,}', '（')   # 多个括号
+        ]
+        
+        for pattern, replacement in duplicate_puncs:
+            cleaned_text = re.sub(pattern, replacement, cleaned_text)
+        
+        # 第五步：移除句首无意义的连接词
+        start_words = ['然后', '还有', '就是', '那个', '这个', '嗯', '啊', '哦']
+        while any(cleaned_text.startswith(word) for word in start_words):
+            for word in start_words:
+                if cleaned_text.startswith(word):
+                    cleaned_text = cleaned_text[len(word):].strip()
+                    break
+        
+        # 第六步：确保合适的结尾标点（中文文法习惯）
+        if cleaned_text:
+            # 中文结尾标点优先级：？> ！> 。> 、> ，> ；> ：
+            # 注意：顿号（、）通常不用作句子结尾
+            if cleaned_text.endswith(('。', '！', '？', '、', '，', '；', '：')):
+                pass  # 已有合适标点（顿号结尾较少见但允许）
+            elif any(word in cleaned_text for word in ['吗', '呢', '吧', '么']):
+                cleaned_text += '？'  # 疑问语气
+            elif any(word in cleaned_text for word in ['啊', '呀', '啦']):
+                cleaned_text += '！'  # 感叹语气
+            else:
+                cleaned_text += '。'  # 默认陈述语气
+        
+        # 第七步：特殊中文表达优化
+        chinese_fixes = {
+            '过程当中': '过程中',
+            '这里边': '这里边',
+            '那么': '那么',  # 保留必要的连词
+            '因为所以': '因为，所以',
+        }
+        
+        for wrong, correct in chinese_fixes.items():
+            cleaned_text = cleaned_text.replace(wrong, correct)
+        
+        logger.info(f"原文: {text}")
+        logger.info(f"清理后: {cleaned_text}")
+        
+        return cleaned_text
     
     def fix_english_punctuation(self, text: str) -> str:
         """修复英文标点符号，符合英文文法习惯"""
