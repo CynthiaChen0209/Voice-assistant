@@ -333,7 +333,7 @@ class ChineseTranscriptionThread(QThread):
                     length_penalty=1.0,  # 长度惩罚因子
                     suppress_tokens=[],  # 不抑制特殊标记
                     prepend_punctuations="\"'¿([{-",  # 标点符号前置处理
-                    append_punctuations "\"'.。,，!！?？:：")",  # 标点符号后置处理
+                    append_punctuations="\"'.。,，!！?？:：\"",  # 标点符号后置处理
                     compression_ratio_threshold=2.4,  # 压缩比阈值
                     logprob_threshold=-1.0,  # 对数概率阈值
                     no_speech_threshold=0.6  # 语音检测阈值
